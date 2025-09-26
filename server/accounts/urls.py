@@ -25,6 +25,14 @@ from .views import (
     # Feed (Categories + Restaurants)
     CategoryViewSet, RestaurantViewSet,
     ProductViewSet,
+    # Cart
+    cart_get, cart_add, cart_item_update_delete, cart_clear,
+    # Checkout / Orders 
+    checkout_create_order,
+    # Payments (mock)
+    payment_confirm,
+    # Orders
+    orders_list, orders_detail,
 )
 
 router = DefaultRouter()
@@ -63,7 +71,19 @@ urlpatterns = [
 
     # Home feed
     path("home/feed/",            HomeFeedView.as_view(),        name="home-feed"),
+
+     # Cart
+    path("cart/", cart_get, name="cart-get"),
+    path("cart/add/", cart_add, name="cart-add"),
+    path("cart/item/<int:item_id>/", cart_item_update_delete, name="cart-item"),
+    path("cart/clear/", cart_clear, name="cart-clear"),
+    path("orders/checkout/", checkout_create_order, name="checkout-create-order"),
+    path("payments/confirm/", payment_confirm, name="payment-confirm"),
+    path("orders/", orders_list, name="orders-list"),
+    path("orders/<int:pk>/", orders_detail, name="orders-detail"),
+
 ]
+
 
 
 urlpatterns += router.urls

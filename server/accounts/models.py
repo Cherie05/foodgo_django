@@ -13,6 +13,7 @@ from django.contrib.auth.models import (
 )
 from django.db import models
 from django.utils import timezone
+from django.db.models import Q 
 
 
 # =========================
@@ -262,3 +263,124 @@ class Product(models.Model):
         except Exception:
             pass
         return self.image_url or ""
+
+
+
+# ---------- Cart / Orders / Payments ----------
+
+from decimal import Decimal
+from django.db import transaction
+
+class Cart(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="carts")
+    is_active = models.BooleanField(default=True)  # one active cart per user
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["user", "is_active"])]
+        constraints = [
+            # one *active* cart per user
+            models.UniqueConstraint(
+                fields=["user"],
+                condition=Q(is_active=True),
+                name="unique_active_cart_per_user",
+            ),
+        ]
+    def __str__(self):
+        return f"Cart<{self.user.email}> active={self.is_active}"
+
+    @property
+    def total(self) -> Decimal:
+        return sum((ci.subtotal for ci in self.items.all()), Decimal("0.00"))
+
+
+class CartItem(models.Model):
+    cart = models.ForeignKey(Cart, on_delete=models.CASCADE, related_name="items")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="+")
+    qty = models.PositiveIntegerField(default=1)
+
+    # snapshot fields so price changes later won’t affect items already in cart
+    title = models.CharField(max_length=140)
+    unit_price = models.DecimalField(max_digits=8, decimal_places=2)
+
+    class Meta:
+        unique_together = ("cart", "product")
+
+    def __str__(self):
+        return f"{self.qty} x {self.title}"
+
+    @property
+    def subtotal(self) -> Decimal:
+        return self.unit_price * self.qty
+
+
+class Order(models.Model):
+    STATUS_PENDING   = "pending"     # created, awaiting payment
+    STATUS_PAID      = "paid"
+    STATUS_PREPARING = "preparing"
+    STATUS_ON_THE_WAY= "on_the_way"
+    STATUS_DELIVERED = "delivered"
+    STATUS_CANCELED  = "canceled"
+
+    STATUS_CHOICES = (
+        (STATUS_PENDING, "Pending"),
+        (STATUS_PAID, "Paid"),
+        (STATUS_PREPARING, "Preparing"),
+        (STATUS_ON_THE_WAY, "On the way"),
+        (STATUS_DELIVERED, "Delivered"),
+        (STATUS_CANCELED, "Canceled"),
+    )
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="orders")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    # address snapshot (simple text for now)
+    address_text = models.CharField(max_length=255, blank=True, default="")
+    # totals snapshot
+    subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    delivery_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Order#{self.id} {self.user.email} {self.status}"
+
+
+class OrderItem(models.Model):
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="items")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="+")
+    title = models.CharField(max_length=140)
+    unit_price = models.DecimalField(max_digits=8, decimal_places=2)
+    qty = models.PositiveIntegerField(default=1)
+    subtotal = models.DecimalField(max_digits=10, decimal_places=2)
+
+    def __str__(self):
+        return f"{self.qty} x {self.title} (Order#{self.order_id})"
+
+
+class Payment(models.Model):
+    METHOD_CASH        = "cash"
+    METHOD_CARD        = "card"     # pretend card
+    METHOD_CHOICES = (
+        (METHOD_CASH, "Cash"),
+        (METHOD_CARD, "Card"),
+    )
+
+    STATUS_CREATED  = "created"
+    STATUS_SUCCESS  = "success"
+    STATUS_FAILED   = "failed"
+
+    order = models.OneToOneField(Order, on_delete=models.CASCADE, related_name="payment")
+    method = models.CharField(max_length=20, choices=METHOD_CHOICES, default=METHOD_CARD)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    status = models.CharField(max_length=20, default=STATUS_CREATED)
+    reference = models.CharField(max_length=64, blank=True, default="")  # external id if any
+    created_at = models.DateTimeField(default=timezone.now)
+
+    def __str__(self):
+        return f"Payment<{self.order_id} {self.method} {self.status}>"

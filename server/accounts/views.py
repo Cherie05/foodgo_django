@@ -28,6 +28,10 @@ from .serializers import (
     LocationUpsertSerializer, LocationGetSerializer,
     UserAddressSerializer, CategorySerializer, RestaurantSerializer,
     ProductSerializer,
+    # cart / orders / payments
+    CartSerializer, AddToCartSerializer, UpdateCartItemSerializer,
+    CreateOrderSerializer, OrderSerializer,
+    PaymentSerializer, PaymentCreateSerializer,
 )
 
 User = get_user_model()
@@ -509,3 +513,233 @@ class ProductViewSet(viewsets.ModelViewSet):
         ctx = super().get_serializer_context()
         ctx["request"] = self.request
         return ctx
+
+
+
+# ---------- Cart / Orders / Payments views ----------
+
+from decimal import Decimal
+from django.db import transaction
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny
+
+from .models import Cart, CartItem, Order, OrderItem, Payment
+
+# ---------- Cart helpers ----------
+from django.db import transaction
+
+def _get_or_create_active_cart(user) -> Cart:
+    """
+    Return a single active cart.
+    If multiple active carts exist (legacy/bug), merge them into one.
+    """
+    with transaction.atomic():
+        qs = Cart.objects.select_for_update().filter(user=user, is_active=True).order_by("-updated_at", "-id")
+        if qs.exists():
+            primary = qs.first()
+            duplicates = list(qs[1:])  # others
+            if duplicates:
+                # Merge items from duplicates into primary
+                for dup in duplicates:
+                    for it in dup.items.select_related("product"):
+                        # get_or_create per-product in the primary cart
+                        merged, created = CartItem.objects.get_or_create(
+                            cart=primary,
+                            product=it.product,
+                            defaults={
+                                "qty": it.qty,
+                                "title": it.title,
+                                "unit_price": it.unit_price,
+                            },
+                        )
+                        if not created:
+                            merged.qty += it.qty
+                            merged.save(update_fields=["qty"])
+                    # deactivate duplicate cart
+                    dup.is_active = False
+                    dup.save(update_fields=["is_active"])
+            return primary
+
+        # none exist: create a fresh one
+        return Cart.objects.create(user=user, is_active=True)
+
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def cart_get(request):
+    email = (request.query_params.get("email") or "").strip().lower()
+    if not email:
+        return Response({"detail": "email is required"}, status=400)
+    try:
+        user = User.objects.get(email__iexact=email)
+    except User.DoesNotExist:
+        return Response({"detail": "User not found."}, status=404)
+    cart = _get_or_create_active_cart(user)
+    return Response(CartSerializer(cart).data)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def cart_add(request):
+    ser = AddToCartSerializer(data=request.data)
+    ser.is_valid(raise_exception=True)
+    user = ser.validated_data["user"]
+    product = ser.validated_data["product"]
+    qty = int(ser.validated_data["qty"])
+
+    cart = _get_or_create_active_cart(user)
+
+    item, created = CartItem.objects.get_or_create(
+        cart=cart, product=product,
+        defaults={"qty": qty, "title": product.title, "unit_price": product.price},
+    )
+    if not created:
+        item.qty += qty
+        item.save(update_fields=["qty"])
+
+    return Response(CartSerializer(cart).data, status=201)
+
+
+@api_view(["PATCH", "DELETE"])
+@permission_classes([AllowAny])
+def cart_item_update_delete(request, item_id: int):
+    try:
+        item = CartItem.objects.select_related("cart").get(pk=item_id, cart__is_active=True)
+    except CartItem.DoesNotExist:
+        return Response({"detail": "Item not found."}, status=404)
+
+    if request.method == "DELETE":
+        cart = item.cart
+        item.delete()
+        return Response(CartSerializer(cart).data)
+
+    # PATCH qty
+    ser = UpdateCartItemSerializer(data=request.data)
+    ser.is_valid(raise_exception=True)
+    item.qty = ser.validated_data["qty"]
+    item.save(update_fields=["qty"])
+    return Response(CartSerializer(item.cart).data)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def cart_clear(request):
+    email = (request.data.get("email") or "").strip().lower()
+    if not email:
+        return Response({"detail": "email is required"}, status=400)
+    try:
+        user = User.objects.get(email__iexact=email)
+    except User.DoesNotExist:
+        return Response({"detail": "User not found."}, status=404)
+    cart = Cart.objects.filter(user=user, is_active=True).first()
+    if cart:
+        cart.items.all().delete()
+    return Response({"message": "Cleared."})
+    
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@transaction.atomic
+def checkout_create_order(request):
+    """
+    Turns the active cart into an Order (status=pending), snapshots prices,
+    closes the cart, creates a Payment record (status=created).
+    """
+    ser = CreateOrderSerializer(data=request.data)
+    ser.is_valid(raise_exception=True)
+    user = ser.validated_data["user"]
+    cart = ser.validated_data["cart"]
+    address_text = ser.validated_data.get("address_text", "")
+    delivery_fee = Decimal(ser.validated_data.get("delivery_fee") or "0.00")
+
+    if cart.items.count() == 0:
+        return Response({"detail": "Cart is empty."}, status=400)
+
+    # snapshot items
+    subtotal = cart.total
+    total = subtotal + delivery_fee
+
+    order = Order.objects.create(
+        user=user,
+        status=Order.STATUS_PENDING,
+        address_text=address_text,
+        subtotal=subtotal,
+        delivery_fee=delivery_fee,
+        total=total,
+    )
+    bulk = []
+    for ci in cart.items.select_related("product"):
+        bulk.append(OrderItem(
+            order=order,
+            product=ci.product,
+            title=ci.title,
+            unit_price=ci.unit_price,
+            qty=ci.qty,
+            subtotal=ci.subtotal,
+        ))
+    OrderItem.objects.bulk_create(bulk)
+
+    # create payment placeholder
+    Payment.objects.create(order=order, method=Payment.METHOD_CARD, amount=total, status=Payment.STATUS_CREATED)
+
+    # close cart
+    cart.is_active = False
+    cart.save(update_fields=["is_active"])
+
+    # create a fresh empty cart for convenience
+    Cart.objects.get_or_create(user=user, is_active=True)
+
+    return Response(OrderSerializer(order).data, status=201)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@transaction.atomic
+def payment_confirm(request):
+    """
+    Mock payment success/fail. Body:
+      { "order_id": <id>, "method": "card"|"cash", "success": true, "reference": "xyz" }
+    """
+    pser = PaymentCreateSerializer(data=request.data)
+    pser.is_valid(raise_exception=True)
+    order: Order = pser.validated_data["order"]
+    method = pser.validated_data["method"]
+    success = bool(request.data.get("success", True))
+    reference = (request.data.get("reference") or "")[:64]
+
+    pay = order.payment
+    pay.method = method
+    pay.reference = reference
+    pay.status = Payment.STATUS_SUCCESS if success else Payment.STATUS_FAILED
+    pay.save(update_fields=["method","reference","status"])
+
+    if success:
+        order.status = Order.STATUS_PAID
+        order.save(update_fields=["status"])
+
+    return Response(PaymentSerializer(pay).data)
+    
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def orders_list(request):
+    email = (request.query_params.get("email") or "").strip().lower()
+    if not email:
+        return Response({"detail": "email is required"}, status=400)
+    try:
+        user = User.objects.get(email__iexact=email)
+    except User.DoesNotExist:
+        return Response([], status=200)
+    qs = Order.objects.filter(user=user).prefetch_related("items")
+    return Response(OrderSerializer(qs, many=True).data)
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def orders_detail(request, pk: int):
+    try:
+        obj = Order.objects.prefetch_related("items").get(pk=pk)
+    except Order.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    return Response(OrderSerializer(obj).data)

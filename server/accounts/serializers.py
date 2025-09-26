@@ -15,7 +15,12 @@ from .models import (
     UserAddress,
     Category,
     Restaurant,
-    Product
+    Product,
+    Cart,
+    CartItem,
+    Order,
+    OrderItem,
+    Payment,
 )
 from django.conf import settings
 
@@ -542,3 +547,102 @@ class ProductSerializer(serializers.ModelSerializer):
     
     def get_categoryNames(self, obj):               # <-- new
         return list(obj.categories.values_list("name", flat=True))
+
+
+
+# ---------- Cart / Orders / Payments serializers ----------
+
+from decimal import Decimal
+
+class CartItemSerializer(serializers.ModelSerializer):
+    product_id = serializers.IntegerField(source="product.id", read_only=True)
+    class Meta:
+        model = CartItem
+        fields = ("id", "product_id", "title", "unit_price", "qty", "subtotal")
+
+class CartSerializer(serializers.ModelSerializer):
+    items = CartItemSerializer(many=True, read_only=True)
+    total = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+
+    class Meta:
+        model = Cart
+        fields = ("id", "is_active", "items", "total", "created_at", "updated_at")
+
+
+class AddToCartSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    product_id = serializers.IntegerField()
+    qty = serializers.IntegerField(min_value=1, default=1)
+
+    def validate(self, attrs):
+        email = attrs["email"].strip().lower()
+        try:
+            user = User.objects.get(email__iexact=email)
+        except User.DoesNotExist:
+            raise serializers.ValidationError({"email": "User not found."})
+        try:
+            product = Product.objects.get(pk=attrs["product_id"], is_available=True)
+        except Product.DoesNotExist:
+            raise serializers.ValidationError({"product_id": "Product not found or unavailable."})
+        attrs["user"] = user
+        attrs["product"] = product
+        return attrs
+
+
+class UpdateCartItemSerializer(serializers.Serializer):
+    qty = serializers.IntegerField(min_value=1)
+
+
+class OrderItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OrderItem
+        fields = ("product", "title", "unit_price", "qty", "subtotal")
+
+
+class OrderSerializer(serializers.ModelSerializer):
+    items = OrderItemSerializer(many=True, read_only=True)
+    class Meta:
+        model = Order
+        fields = (
+            "id","status","address_text","subtotal","delivery_fee","total",
+            "created_at","items"
+        )
+
+
+class CreateOrderSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    address_text = serializers.CharField(max_length=255, allow_blank=True, required=False)
+    delivery_fee = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, default=Decimal("0.00"))
+
+    def validate(self, attrs):
+        email = attrs["email"].strip().lower()
+        try:
+            user = User.objects.get(email__iexact=email)
+        except User.DoesNotExist:
+            raise serializers.ValidationError({"email": "User not found."})
+        # must have active cart with items
+        cart = Cart.objects.filter(user=user, is_active=True).first()
+        if not cart or cart.items.count() == 0:
+            raise serializers.ValidationError("Cart is empty.")
+        attrs["user"] = user
+        attrs["cart"] = cart
+        return attrs
+
+
+class PaymentCreateSerializer(serializers.Serializer):
+    order_id = serializers.IntegerField()
+    method = serializers.ChoiceField(choices=[("card","card"),("cash","cash")], default="card")
+
+    def validate(self, attrs):
+        try:
+            order = Order.objects.get(pk=attrs["order_id"], status=Order.STATUS_PENDING)
+        except Order.DoesNotExist:
+            raise serializers.ValidationError("Order not found or not pending.")
+        attrs["order"] = order
+        return attrs
+
+
+class PaymentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Payment
+        fields = ("order","method","amount","status","reference","created_at")

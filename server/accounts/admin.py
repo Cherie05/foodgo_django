@@ -156,3 +156,39 @@ class ProductAdmin(admin.ModelAdmin):
             return format_html('<img src="{}" style="height:60px;border-radius:6px;" />', obj.image_url)
         return "—"
     preview.short_description = "Preview"
+
+
+
+from .models import Cart, CartItem, Order, OrderItem, Payment
+
+@admin.register(Cart)
+class CartAdmin(admin.ModelAdmin):
+    list_display = ("id", "user", "is_active", "created_at", "updated_at")
+    list_filter = ("is_active",)
+    search_fields = ("user__email",)
+    readonly_fields = ("created_at", "updated_at")
+
+@admin.register(CartItem)
+class CartItemAdmin(admin.ModelAdmin):
+    list_display = ("id", "cart", "title", "qty", "unit_price")
+    search_fields = ("title", "cart__user__email")
+
+class OrderItemInline(admin.TabularInline):
+    model = OrderItem
+    extra = 0
+    readonly_fields = ()
+
+@admin.register(Order)
+class OrderAdmin(admin.ModelAdmin):
+    list_display = ("id", "user", "status", "total", "created_at")
+    list_filter = ("status",)
+    search_fields = ("user__email", "id")
+    readonly_fields = ("created_at", "updated_at")
+    inlines = [OrderItemInline]
+
+@admin.register(Payment)
+class PaymentAdmin(admin.ModelAdmin):
+    list_display = ("order", "method", "amount", "status", "reference", "created_at")
+    list_filter = ("method", "status")
+    search_fields = ("order__id", "reference")
+    readonly_fields = ("created_at",)
