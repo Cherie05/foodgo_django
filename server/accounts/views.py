@@ -735,6 +735,44 @@ def orders_list(request):
     return Response(OrderSerializer(qs, many=True).data)
 
 
+from .mailers import send_otp_email
+class SendOTPView(APIView):
+    authentication_classes: list = []
+    permission_classes: list = []
+
+    def post(self, request):
+        ser = SendOTPSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        user = ser.validated_data["user"]
+
+        otp = OTPCode.create_for_user(user, minutes_valid=10, purpose="signup")
+        send_otp_email(
+            user.email,
+            subject="Your verification code",
+            text=f"Your OTP is {otp.code}. It expires in 10 minutes."
+        )
+        return Response({"message": "OTP sent."}, status=200)
+
+
+class SendPasswordResetOTPView(APIView):
+    authentication_classes: list = []
+    permission_classes: list = []
+
+    def post(self, request):
+        ser = SendPasswordResetOTPSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        user = ser.validated_data["user"]
+
+        otp = OTPCode.create_for_user(user, minutes_valid=10, purpose="password_reset")
+        send_otp_email(
+            user.email,
+            subject="Reset password code",
+            text=f"Your password reset OTP is {otp.code}. It expires in 10 minutes."
+        )
+        return Response({"message": "OTP sent."}, status=200)
+
+
+
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def orders_detail(request, pk: int):

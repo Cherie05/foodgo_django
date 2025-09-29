@@ -30,11 +30,13 @@ ALLOWED_HOSTS = [
     "localhost",
     # add your PA domain AFTER you know it, e.g.:
     "arunvpp.pythonanywhere.com",
-    "192.168.1.28"
+    "192.168.1.13"
 
 ]  # dev only
 
 CSRF_TRUSTED_ORIGINS = [
+    "http://127.0.0.1:8000",
+    "http://localhost:8000",
     "https://arunvpp.pythonanywhere.com",
 ]
 
