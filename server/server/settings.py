@@ -34,6 +34,10 @@ ALLOWED_HOSTS = [
 
 ]  # dev only
 
+CSRF_TRUSTED_ORIGINS = [
+    "https://arunvpp.pythonanywhere.com",
+]
+
 # Application definition
 
 INSTALLED_APPS = [
@@ -52,9 +56,9 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'corsheaders.middleware.CorsMiddleware',  # <— add this
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
-    'corsheaders.middleware.CorsMiddleware',  # <— add this
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
@@ -150,6 +154,11 @@ CORS_ALLOWED_ORIGINS = [
     "http://192.168.1.28:8000",
 
     "https://arunvpp.pythonanywhere.com",
+]
+
+CORS_ALLOW_HEADERS = [
+    "accept", "accept-encoding", "authorization", "content-type",
+    "origin", "user-agent", "dnt", "x-csrftoken", "x-requested-with",
 ]
 
 REST_FRAMEWORK = {
