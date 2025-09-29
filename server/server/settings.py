@@ -207,3 +207,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
+
+
+LOGGING = {
+    "version": 1, "disable_existing_loggers": False,
+    "handlers": {"console": {"class": "logging.StreamHandler"}},
+    "loggers": {
+        "django": {"handlers": ["console"], "level": "INFO"},
+        "django.request": {"handlers": ["console"], "level": "WARNING"},
+        "accounts": {"handlers": ["console"], "level": "INFO"},
+        "cart": {"handlers": ["console"], "level": "INFO"},
+    },
+}
+
