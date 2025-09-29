@@ -146,6 +146,9 @@ AUTH_USER_MODEL = "accounts.CustomerUser"
 # CORS/DRF (dev-friendly)
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_CREDENTIALS = True
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
+
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:19006",  # Expo web/dev
@@ -156,10 +159,7 @@ CORS_ALLOWED_ORIGINS = [
     "https://arunvpp.pythonanywhere.com",
 ]
 
-CORS_ALLOW_HEADERS = [
-    "accept", "accept-encoding", "authorization", "content-type",
-    "origin", "user-agent", "dnt", "x-csrftoken", "x-requested-with",
-]
+CORS_ALLOW_HEADERS = list() 
 
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
