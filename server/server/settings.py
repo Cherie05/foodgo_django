@@ -147,8 +147,9 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:19006",  # Expo web/dev
     "http://localhost:8081",   # Metro bundler
     "http://127.0.0.1:19006",
-    "http://192.168.1.28:8000"
-    # add your LAN IPs during device testing if needed, e.g. "http://192.168.1.28:19006"
+    "http://192.168.1.28:8000",
+
+    "https://arunvpp.pythonanywhere.com",
 ]
 
 REST_FRAMEWORK = {
