@@ -1,5 +1,4 @@
-# accounts/mailers.py
-import os, json, requests
+import os, json
 from django.core.mail import send_mail
 
 BREVO_API_KEY = os.getenv("BREVO_API_KEY", "")
@@ -13,8 +12,14 @@ def _from_address():
     return DEFAULT_FROM_EMAIL
 
 def _send_via_brevo_api(to_email: str, subject: str, text: str) -> None:
+    try:
+        import requests
+    except ImportError:
+        raise RuntimeError("The 'requests' package is required. Install it in your venv: pip install requests")
+
     if not BREVO_API_KEY:
         raise RuntimeError("BREVO_API_KEY missing; cannot send via API")
+
     headers = {
         "accept": "application/json",
         "api-key": BREVO_API_KEY,
@@ -30,7 +35,7 @@ def _send_via_brevo_api(to_email: str, subject: str, text: str) -> None:
     r.raise_for_status()
 
 def send_otp_email(to_email: str, subject: str, text: str) -> None:
-    # Try SMTP if requested; fallback to API on failure (PA free blocks most SMTP).
+    # Try SMTP if configured; on PA free it usually fails → fallback to API.
     if EMAIL_MODE == "smtp":
         try:
             send_mail(subject, text, None, [to_email], fail_silently=False)
